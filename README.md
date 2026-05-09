@@ -21,9 +21,11 @@ Bronze
 
 Raw delivery-aware ingestion layer.
 
-Main table:
+Main tables:
 
 bronze.olist_orders_raw
+
+bronze.olist_customers_raw
 
 Key concepts:
 
@@ -41,6 +43,8 @@ Tables:
 
 silver.orders_current
 silver.orders_history
+silver.customers_current
+silver.customers_history
 
 orders_current is SCD1-style current state.
 
@@ -50,6 +54,9 @@ valid_from_utc
 valid_to_utc
 is_current
 row_hash
+
+customers_current and customers_history follow the same SCD1 / SCD2 pattern for customer attributes.
+
 Gold
 
 Analytics marts.
@@ -71,6 +78,15 @@ Build Silver orders
 python -m src.pipelines.build_silver_orders
 Build Gold daily orders
 python -m src.pipelines.build_gold_daily_orders
+Ingest Olist customers
+
+python -m src.pipelines.ingest_olist_customers
+
+Reload mode:
+
+python -m src.pipelines.ingest_olist_customers --mode RELOAD
+Build Silver customers
+python -m src.pipelines.build_silver_customers
 Current validated behavior
 Bronze loads Olist orders
 Reload appends a new delivery

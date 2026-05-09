@@ -44,7 +44,8 @@ Gold tables are business-facing aggregates.
 
 Gold should use Silver as its source, not Bronze.
 
-Current implemented flow
+Current implemented flow — orders
+
 data/olist/olist_orders_dataset.csv
         ↓
 bronze.olist_orders_raw
@@ -53,3 +54,12 @@ silver.orders_current
 silver.orders_history
         ↓
 gold.daily_orders
+
+Current implemented flow — customers
+
+data/olist/olist_customers_dataset.csv
+        ↓
+bronze.olist_customers_raw
+        ↓
+silver.customers_current
+silver.customers_history
