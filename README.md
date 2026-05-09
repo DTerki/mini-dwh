@@ -67,6 +67,12 @@ gold.daily_orders
 
 Built from silver.orders_current.
 
+gold.customers_current
+
+gold.customers_history
+
+Built from silver.customers_current and silver.customers_history (full refresh).
+
 Pipelines
 Ingest Olist orders
 python -m src.pipelines.ingest_olist_orders
@@ -87,6 +93,8 @@ Reload mode:
 python -m src.pipelines.ingest_olist_customers --mode RELOAD
 Build Silver customers
 python -m src.pipelines.build_silver_customers
+Build Gold customers
+python -m src.pipelines.build_gold_customers
 Current validated behavior
 Bronze loads Olist orders
 Reload appends a new delivery
@@ -110,3 +118,9 @@ SELECT
     COUNT(*) AS silver_total
 FROM silver.orders_current
 WHERE order_purchase_timestamp IS NOT NULL;
+
+SELECT COUNT(*) AS gold_c FROM gold.customers_current;
+SELECT COUNT(*) AS silver_c FROM silver.customers_current;
+
+SELECT COUNT(*) AS gold_h FROM gold.customers_history;
+SELECT COUNT(*) AS silver_h FROM silver.customers_history;

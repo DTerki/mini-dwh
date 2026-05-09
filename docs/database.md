@@ -364,6 +364,100 @@ WHERE order_purchase_timestamp IS NOT NULL;
 
 These numbers must match.
 
+## gold.customers_current
+
+Purpose: BI-facing current customer dimension; full refresh from `silver.customers_current`.
+
+Grain: one row per `customer_id`.
+
+```sql
+CREATE TABLE gold.customers_current (
+    customer_id NVARCHAR(100) NOT NULL PRIMARY KEY,
+    customer_unique_id NVARCHAR(100) NULL,
+    customer_zip_code_prefix NVARCHAR(20) NULL,
+    customer_city NVARCHAR(100) NULL,
+    customer_state NVARCHAR(10) NULL,
+
+    row_hash NVARCHAR(64) NOT NULL,
+
+    source_name NVARCHAR(100) NOT NULL,
+    source_record_id NVARCHAR(100) NOT NULL,
+    delivery_id BIGINT NOT NULL,
+    bronze_batch_id BIGINT NOT NULL,
+
+    gold_updated_at_utc DATETIME2 NOT NULL
+);
+```
+
+Source:
+
+```sql
+silver.customers_current
+```
+
+## gold.customers_history
+
+Purpose: BI-facing SCD2 customer history; full refresh from `silver.customers_history`. Surrogate keys match Silver.
+
+Grain: one row per observed version of `customer_id`.
+
+```sql
+CREATE TABLE gold.customers_history (
+    customer_history_sk BIGINT NOT NULL PRIMARY KEY,
+    customer_id NVARCHAR(100) NOT NULL,
+    customer_unique_id NVARCHAR(100) NULL,
+    customer_zip_code_prefix NVARCHAR(20) NULL,
+    customer_city NVARCHAR(100) NULL,
+    customer_state NVARCHAR(10) NULL,
+
+    row_hash NVARCHAR(64) NOT NULL,
+
+    valid_from_utc DATETIME2 NOT NULL,
+    valid_to_utc DATETIME2 NULL,
+    is_current BIT NOT NULL,
+
+    source_name NVARCHAR(100) NOT NULL,
+    source_record_id NVARCHAR(100) NOT NULL,
+    delivery_id BIGINT NOT NULL,
+    bronze_batch_id BIGINT NOT NULL,
+
+    created_at_utc DATETIME2 NOT NULL,
+    gold_updated_at_utc DATETIME2 NOT NULL
+);
+```
+
+Indexes (recommended):
+
+```sql
+CREATE INDEX IX_gold_customers_history_customer_id
+ON gold.customers_history(customer_id);
+
+CREATE INDEX IX_gold_customers_history_current
+ON gold.customers_history(customer_id, is_current);
+```
+
+Source:
+
+```sql
+silver.customers_history
+```
+
+Validation (row counts must match after each Gold build):
+
+```sql
+SELECT COUNT(*) AS gold_current
+FROM gold.customers_current;
+
+SELECT COUNT(*) AS silver_current
+FROM silver.customers_current;
+
+SELECT COUNT(*) AS gold_history
+FROM gold.customers_history;
+
+SELECT COUNT(*) AS silver_history
+FROM silver.customers_history;
+```
+
 ---
 
 # Pipeline Order
@@ -378,12 +472,14 @@ build_silver_orders
 build_gold_daily_orders
 ```
 
-Customers (Silver only; no date grain in source for a Gold mart):
+Customers (through Gold):
 
 ```text
 ingest_olist_customers
         ↓
 build_silver_customers
+        ↓
+build_gold_customers
 ```
 
 Commands:
@@ -398,4 +494,5 @@ python -m src.pipelines.build_gold_daily_orders
 
 python -m src.pipelines.ingest_olist_customers --mode RELOAD
 python -m src.pipelines.build_silver_customers
+python -m src.pipelines.build_gold_customers
 ```

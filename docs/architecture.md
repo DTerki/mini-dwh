@@ -63,3 +63,6 @@ bronze.olist_customers_raw
         ↓
 silver.customers_current
 silver.customers_history
+        ↓
+gold.customers_current
+gold.customers_history
