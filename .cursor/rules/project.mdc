@@ -1,0 +1,38 @@
+---
+description: Mini DWH project rules
+alwaysApply: true
+---
+
+This is a local mini-DWH project.
+
+Environment:
+- Windows host
+- VS Code / Cursor Dev Container
+- Python 3.11
+- SQL Server 2022 in Docker
+
+Critical DB connection:
+- From inside Dev Container, use: host.docker.internal,1433
+- From Windows tools, use: 127.0.0.1,1433
+- Target database is always: mini_dwh
+- Never write DWH objects to master
+
+Run pattern:
+cd /workspaces/mini-dwh
+export PYTHONPATH=$(pwd)
+
+Architecture:
+- Bronze = raw delivery-aware ingestion
+- Silver = business-grain current + history
+- Gold = analytics marts
+
+Core IDs:
+- batch_id = technical pipeline run
+- delivery_id = source artifact / API pull
+- source_record_id = source business key
+
+Important:
+- Bronze should be append-only by delivery
+- RELOAD should not delete old Bronze rows
+- Silver history uses SCD2
+- Gold should read from Silver, not Bronze
