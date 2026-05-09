@@ -1,5 +1,6 @@
-﻿FROM mcr.microsoft.com/devcontainers/python:3.11
+FROM mcr.microsoft.com/devcontainers/python:3.11
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    docker.io \
  && rm -rf /var/lib/apt/lists/*
