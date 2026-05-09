@@ -336,7 +336,7 @@ def main():
         conn.commit()
         print("Ensured Silver objects exist")
 
-        cursor.execute(GET_UNPROCESSED_DELIVERIES_SQL, SOURCE_NAME)
+        cursor.execute(GET_UNPROCESSED_DELIVERIES_SQL, (SOURCE_NAME,))
         delivery_rows = cursor.fetchall()
 
         if not delivery_rows:
