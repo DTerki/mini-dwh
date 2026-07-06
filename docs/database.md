@@ -460,6 +460,155 @@ FROM silver.customers_history;
 
 ---
 
+# GitHub Issues Tables
+
+## bronze.github_issues_raw
+
+Purpose: raw + parsed delivery-level GitHub issues from REST API.
+
+```sql
+CREATE TABLE bronze.github_issues_raw (
+    bronze_id BIGINT IDENTITY(1,1) PRIMARY KEY,
+    batch_id BIGINT NOT NULL,
+    delivery_id BIGINT NOT NULL,
+    source_name NVARCHAR(100) NOT NULL,
+    source_record_id NVARCHAR(100) NOT NULL,
+    payload_json NVARCHAR(MAX) NOT NULL,
+
+    issue_number INT NULL,
+    title NVARCHAR(500) NULL,
+    state NVARCHAR(20) NULL,
+    created_at DATETIME2 NULL,
+    updated_at DATETIME2 NULL,
+    closed_at DATETIME2 NULL,
+    user_login NVARCHAR(100) NULL,
+    labels_json NVARCHAR(MAX) NULL,
+
+    extracted_at_utc DATETIME2 NOT NULL
+);
+```
+
+Recommended indexes:
+
+```sql
+CREATE INDEX IX_github_issues_raw_delivery_id
+ON bronze.github_issues_raw(delivery_id);
+
+CREATE INDEX IX_github_issues_raw_source_record
+ON bronze.github_issues_raw(source_name, source_record_id);
+
+CREATE INDEX IX_github_issues_raw_issue_delivery
+ON bronze.github_issues_raw(issue_number, delivery_id);
+```
+
+## silver.github_issues_current
+
+Purpose: current-state issue table. SCD1-style.
+
+Grain: one row per `issue_number`.
+
+```sql
+CREATE TABLE silver.github_issues_current (
+    issue_number INT NOT NULL PRIMARY KEY,
+    title NVARCHAR(500) NULL,
+    state NVARCHAR(20) NULL,
+    created_at DATETIME2 NULL,
+    updated_at DATETIME2 NULL,
+    closed_at DATETIME2 NULL,
+    user_login NVARCHAR(100) NULL,
+    labels_json NVARCHAR(MAX) NULL,
+
+    row_hash NVARCHAR(64) NOT NULL,
+
+    source_name NVARCHAR(100) NOT NULL,
+    source_record_id NVARCHAR(100) NOT NULL,
+    delivery_id BIGINT NOT NULL,
+    bronze_batch_id BIGINT NOT NULL,
+
+    silver_updated_at_utc DATETIME2 NOT NULL
+);
+```
+
+## silver.github_issues_history
+
+Purpose: SCD2 observed history of issue attributes.
+
+```sql
+CREATE TABLE silver.github_issues_history (
+    issue_history_sk BIGINT IDENTITY(1,1) PRIMARY KEY,
+    issue_number INT NOT NULL,
+    title NVARCHAR(500) NULL,
+    state NVARCHAR(20) NULL,
+    created_at DATETIME2 NULL,
+    updated_at DATETIME2 NULL,
+    closed_at DATETIME2 NULL,
+    user_login NVARCHAR(100) NULL,
+    labels_json NVARCHAR(MAX) NULL,
+
+    row_hash NVARCHAR(64) NOT NULL,
+
+    valid_from_utc DATETIME2 NOT NULL,
+    valid_to_utc DATETIME2 NULL,
+    is_current BIT NOT NULL,
+
+    source_name NVARCHAR(100) NOT NULL,
+    source_record_id NVARCHAR(100) NOT NULL,
+    delivery_id BIGINT NOT NULL,
+    bronze_batch_id BIGINT NOT NULL,
+
+    created_at_utc DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+);
+```
+
+Tracked fields for `row_hash`:
+
+- `title`, `state`, `labels_json`, `user_login`, `closed_at`
+
+## gold.daily_open_issues
+
+Purpose: daily count of open issues (from SCD2 history).
+
+Grain: one row per `snapshot_date`.
+
+```sql
+CREATE TABLE gold.daily_open_issues (
+    snapshot_date DATE NOT NULL PRIMARY KEY,
+    open_issues_count INT NOT NULL,
+    gold_updated_at_utc DATETIME2 NOT NULL
+);
+```
+
+## gold.issue_resolution_time
+
+Purpose: resolution time for closed issues.
+
+Grain: one row per closed `issue_number`.
+
+```sql
+CREATE TABLE gold.issue_resolution_time (
+    issue_number INT NOT NULL PRIMARY KEY,
+    title NVARCHAR(500) NULL,
+    user_login NVARCHAR(100) NULL,
+    created_at DATETIME2 NOT NULL,
+    closed_at DATETIME2 NOT NULL,
+    resolution_days INT NOT NULL,
+    gold_updated_at_utc DATETIME2 NOT NULL
+);
+```
+
+Validation:
+
+```sql
+SELECT COUNT(*) AS silver_closed
+FROM silver.github_issues_current
+WHERE state = 'closed' AND closed_at IS NOT NULL;
+
+SELECT COUNT(*) AS gold_resolution
+FROM gold.issue_resolution_time;
+```
+
+---
+
 # Pipeline Order
 
 Orders (through Gold):
@@ -495,4 +644,22 @@ python -m src.pipelines.build_gold_daily_orders
 python -m src.pipelines.ingest_olist_customers --mode RELOAD
 python -m src.pipelines.build_silver_customers
 python -m src.pipelines.build_gold_customers
+```
+
+GitHub Issues (through Gold):
+
+```text
+ingest_github_issues
+        ↓
+build_silver_github_issues
+        ↓
+build_gold_github_issue_metrics
+```
+
+Commands:
+
+```bash
+python -m src.pipelines.ingest_github_issues
+python -m src.pipelines.build_silver_github_issues
+python -m src.pipelines.build_gold_github_issue_metrics
 ```
