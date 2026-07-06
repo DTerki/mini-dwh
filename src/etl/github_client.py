@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from typing import Any
 
 import requests
@@ -12,6 +13,10 @@ class GitHubApiError(Exception):
     """Raised when the GitHub API returns an error response."""
 
 
+class GitHubConfigurationError(Exception):
+    """Raised when required GitHub configuration is missing."""
+
+
 class GitHubClient:
     def __init__(
         self,
@@ -19,17 +24,25 @@ class GitHubClient:
         repo: str | None = None,
         token: str | None = None,
     ) -> None:
-        self.owner = owner or os.getenv("GITHUB_REPO_OWNER", "terkd")
-        self.repo = repo or os.getenv("GITHUB_REPO_NAME", "mini-dwh")
+        self.owner = owner or os.getenv("GITHUB_REPO_OWNER", "dbt-labs")
+        self.repo = repo or os.getenv("GITHUB_REPO_NAME", "dbt-core")
         self.token = token if token is not None else os.getenv("GITHUB_TOKEN", "")
+        self._last_since: str | None = None
+        self._require_token()
+
+    def _require_token(self) -> None:
+        if not self.token or not self.token.strip():
+            raise GitHubConfigurationError(
+                "GITHUB_TOKEN is required. Create a free Personal Access Token "
+                "with read access to public repos and set it in .env."
+            )
 
     def _headers(self) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
+            "Authorization": f"Bearer {self.token.strip()}",
         }
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
     @retry(
@@ -61,20 +74,37 @@ class GitHubClient:
             raise GitHubApiError("GitHub issues response is not a list")
         return data
 
-    def fetch_issues(self, state: str = "all") -> list[dict[str, Any]]:
+    def fetch_issues(
+        self,
+        state: str = "all",
+        since: datetime | str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Fetch repository issues (excludes pull requests) with pagination.
+
+        since: ISO-8601 timestamp; only issues updated at or after this time.
         """
         url = f"{GITHUB_API_BASE}/repos/{self.owner}/{self.repo}/issues"
         page = 1
         all_issues: list[dict[str, Any]] = []
 
+        since_iso: str | None = None
+        if since is not None:
+            if isinstance(since, datetime):
+                since_iso = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+            else:
+                since_iso = since
+        self._last_since = since_iso
+
         while True:
-            params = {
+            params: dict[str, Any] = {
                 "state": state,
                 "per_page": 100,
                 "page": page,
             }
+            if since_iso:
+                params["since"] = since_iso
+
             page_data = self._get_page(url, params)
 
             issues_only = [item for item in page_data if "pull_request" not in item]
@@ -86,6 +116,8 @@ class GitHubClient:
 
         return all_issues
 
-    @property
-    def source_object_name(self) -> str:
-        return f"{self.owner}/{self.repo}/issues?state=all"
+    def source_object_name(self, state: str = "all") -> str:
+        base = f"{self.owner}/{self.repo}/issues?state={state}"
+        if self._last_since:
+            return f"{base}&since={self._last_since}"
+        return base

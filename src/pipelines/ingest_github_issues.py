@@ -1,6 +1,7 @@
 import json
+import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.etl.base_pipeline import BaseBronzeIngestionPipeline
@@ -26,6 +27,19 @@ def labels_to_json(labels: list[dict[str, Any]] | None) -> str | None:
     return json.dumps(names, ensure_ascii=False)
 
 
+def compute_since_datetime() -> datetime | None:
+    """
+    Return UTC cutoff for GitHub `since` parameter.
+
+    GITHUB_SINCE_DAYS defaults to 90. Set 0 for full history (no since filter).
+    """
+    raw = os.getenv("GITHUB_SINCE_DAYS", "90").strip()
+    if not raw or raw == "0":
+        return None
+    days = int(raw)
+    return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+
+
 class IngestGitHubIssuesPipeline(BaseBronzeIngestionPipeline):
     pipeline_name = "ingest_github_issues"
     source_name = "github_issues"
@@ -35,10 +49,14 @@ class IngestGitHubIssuesPipeline(BaseBronzeIngestionPipeline):
         super().__init__(load_mode=load_mode)
         self.client = GitHubClient()
         self._fetched_issues: list[dict[str, Any]] = []
+        self._since_dt = compute_since_datetime()
+
+    def _fetch_issues(self) -> list[dict[str, Any]]:
+        return self.client.fetch_issues(state="all", since=self._since_dt)
 
     def create_delivery(self, cursor, batch_id: int) -> int:
         if not self._fetched_issues:
-            self._fetched_issues = self.client.fetch_issues(state="all")
+            self._fetched_issues = self._fetch_issues()
 
         canonical_payload = json.dumps(
             self._fetched_issues,
@@ -52,7 +70,7 @@ class IngestGitHubIssuesPipeline(BaseBronzeIngestionPipeline):
             cursor=cursor,
             source_name=self.source_name,
             delivery_type=self.delivery_type,
-            source_object_name=self.client.source_object_name,
+            source_object_name=self.client.source_object_name(state="all"),
             snapshot_date=None,
             content_hash=content_hash,
             batch_id=batch_id,
@@ -60,7 +78,7 @@ class IngestGitHubIssuesPipeline(BaseBronzeIngestionPipeline):
 
     def fetch_data(self) -> list[dict[str, Any]]:
         if not self._fetched_issues:
-            self._fetched_issues = self.client.fetch_issues(state="all")
+            self._fetched_issues = self._fetch_issues()
         return self._fetched_issues
 
     def transform_records(
