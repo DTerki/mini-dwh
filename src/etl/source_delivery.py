@@ -18,6 +18,17 @@ def compute_file_hash(file_path: str) -> str:
     return hash_md5.hexdigest()
 
 
+def compute_payload_hash(payload: str) -> str:
+    """
+    Compute MD5 hash for API response body or canonical JSON payload.
+
+    Used to detect identical API pulls (duplicate delivery).
+    """
+    hash_md5 = hashlib.md5()
+    hash_md5.update(payload.encode("utf-8"))
+    return hash_md5.hexdigest()
+
+
 def create_delivery(
     cursor,
     source_name: str,

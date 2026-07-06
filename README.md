@@ -4,123 +4,258 @@ Local mini data warehouse project using Python, SQL Server, and a Bronze/Silver/
 
 ## Environment
 
-- OS: Windows
+- OS: Windows / Linux
 - IDE: VS Code Dev Container
 - Runtime: Python 3.11
-- Database: SQL Server 2022 in Docker
+- Database: SQL Server 2022
 
 ## Critical connection detail
 
-From inside the Dev Container, SQL Server is accessed through:
+SQL Server is accessed through:
 
 ```text
 host.docker.internal,1433
+```
 
-Layers
-Bronze
+Database credentials (from `.env`):
+- Server: `host.docker.internal,1433`
+- Database: `mini_dwh`
+- User: `sa`
+- Password: `YourStrong!Passw0rd123`
+
+## Setup & Installation
+
+### 1. Install Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Initialize Database Schema
+
+Before running any pipelines, initialize the database with all required schemas and tables:
+
+```bash
+python init_database.py
+```
+
+This creates:
+- Schemas: `etl`, `bronze`, `silver`, `gold`
+- ETL tracking tables: `etl.batch_run`, `etl.source_delivery`, `etl.silver_delivery_log`
+- Bronze raw tables: `bronze.olist_orders_raw`, `bronze.olist_customers_raw`
+- Silver current & history tables for orders and customers
+- All necessary indexes for performance
+## Layers
+
+### Bronze
 
 Raw delivery-aware ingestion layer.
 
-Main tables:
+**Main tables:**
+- `bronze.olist_orders_raw` — raw orders from CSV
+- `bronze.olist_customers_raw` — raw customers from CSV
 
-bronze.olist_orders_raw
+**Key concepts:**
+- `batch_id` = technical pipeline run ID
+- `delivery_id` = source artifact ID (file/API pull)
+- `source_record_id` = business key
+- Bronze is **append-only by delivery**
+- Duplicate deliveries are detected and skipped
+- Reload creates a new delivery, does not delete old Bronze rows
 
-bronze.olist_customers_raw
+### Silver
 
-Key concepts:
+Business-grain cleaned layer with SCD (Slowly Changing Dimension) support.
 
-batch_id = technical pipeline run
-delivery_id = file/API delivery
-source_record_id = business key
-Bronze is append-only by delivery
-duplicate deliveries are skipped or marked
-reload creates a new delivery, does not delete old Bronze rows
-Silver
+**Tables:**
+- `silver.orders_current` — SCD1-style current state (one row per order)
+- `silver.orders_history` — SCD2-style history with valid_from/valid_to dates
+- `silver.customers_current` — SCD1-style current state (one row per customer)
+- `silver.customers_history` — SCD2-style history with valid_from/valid_to dates
 
-Business-grain cleaned layer.
+**History tracking includes:**
+- `valid_from_utc` — when this version became active
+- `valid_to_utc` — when this version became inactive
+- `is_current` — flag for current version
+- `row_hash` — hash of business fields to detect changes
 
-Tables:
+### Gold
 
-silver.orders_current
-silver.orders_history
-silver.customers_current
-silver.customers_history
+Analytics-ready business marts.
 
-orders_current is SCD1-style current state.
+**Tables:**
+- `gold.daily_orders` — daily order metrics (built from `silver.orders_current`)
+- `gold.customers_current` — current customer dimension
+- `gold.customers_history` — historical customer records
 
-orders_history is SCD2-style observed history with:
+---
 
-valid_from_utc
-valid_to_utc
-is_current
-row_hash
+## Pipelines
 
-customers_current and customers_history follow the same SCD1 / SCD2 pattern for customer attributes.
+### Bronze Ingestion Pipelines
 
-Gold
+These pipelines load CSV data into Bronze tables. Run these first.
 
-Analytics marts.
-
-Tables:
-
-gold.daily_orders
-
-Built from silver.orders_current.
-
-gold.customers_current
-
-gold.customers_history
-
-Built from silver.customers_current and silver.customers_history (full refresh).
-
-Pipelines
-Ingest Olist orders
+**Ingest Olist Orders:**
+```bash
 python -m src.pipelines.ingest_olist_orders
+```
 
-Reload mode:
-
+Reload mode (clears and reloads all data):
+```bash
 python -m src.pipelines.ingest_olist_orders --mode RELOAD
-Build Silver orders
-python -m src.pipelines.build_silver_orders
-Build Gold daily orders
-python -m src.pipelines.build_gold_daily_orders
-Ingest Olist customers
+```
 
+**Ingest Olist Customers:**
+```bash
 python -m src.pipelines.ingest_olist_customers
+```
 
 Reload mode:
-
+```bash
 python -m src.pipelines.ingest_olist_customers --mode RELOAD
-Build Silver customers
-python -m src.pipelines.build_silver_customers
-Build Gold customers
-python -m src.pipelines.build_gold_customers
-Current validated behavior
-Bronze loads Olist orders
-Reload appends a new delivery
-Silver current keeps one row per order
-Silver history creates a new SCD2 version when tracked fields change
-Silver delivery processing is idempotent
-Gold daily orders aggregates match Silver totals
+```
 
-Validation queries
+### Silver Transformation Pipelines
+
+These pipelines transform Bronze data into business-grain Silver tables.
+
+**Build Silver Orders:**
+```bash
+python -m src.pipelines.build_silver_orders
+```
+
+**Build Silver Customers:**
+```bash
+python -m src.pipelines.build_silver_customers
+```
+
+### Gold Analytics Pipelines
+
+These pipelines build analytics-ready marts from Silver tables.
+
+**Build Gold Daily Orders:**
+```bash
+python -m src.pipelines.build_gold_daily_orders
+```
+
+**Build Gold Customers:**
+```bash
+python -m src.pipelines.build_gold_customers
+```
+
+---
+
+## Recommended Execution Order
+
+1. **Initialize database** (one-time):
+   ```bash
+   python init_database.py
+   ```
+
+2. **Load Bronze layer:**
+   ```bash
+   python -m src.pipelines.ingest_olist_orders
+   python -m src.pipelines.ingest_olist_customers
+   ```
+
+3. **Transform to Silver:**
+   ```bash
+   python -m src.pipelines.build_silver_orders
+   python -m src.pipelines.build_silver_customers
+   ```
+
+4. **Build Gold analytics marts:**
+   ```bash
+   python -m src.pipelines.build_gold_daily_orders
+   python -m src.pipelines.build_gold_customers
+   ```
+
+---
+
+## Current Data Flows
+
+### Orders Flow
+```
+data/olist/olist_orders_dataset.csv
+    ↓
+bronze.olist_orders_raw (raw ingestion)
+    ↓
+silver.orders_current (latest state - SCD1)
+silver.orders_history (full history - SCD2)
+    ↓
+gold.daily_orders (analytics mart)
+```
+
+### Customers Flow
+```
+data/olist/olist_customers_dataset.csv
+    ↓
+bronze.olist_customers_raw (raw ingestion)
+    ↓
+silver.customers_current (latest state - SCD1)
+silver.customers_history (full history - SCD2)
+    ↓
+gold.customers_current
+gold.customers_history (analytics marts)
+```
+
+---
+
+## Validation
+
+After running the full pipeline, verify data integrity with these queries:
+
+```sql
 USE mini_dwh;
 
-SELECT COUNT(*) FROM silver.orders_current;
+-- Check Bronze loads
+SELECT COUNT(*) as bronze_orders FROM bronze.olist_orders_raw;
+SELECT COUNT(*) as bronze_customers FROM bronze.olist_customers_raw;
 
-SELECT COUNT(*) FROM silver.orders_history;
+-- Check Silver current tables
+SELECT COUNT(*) as silver_orders_current FROM silver.orders_current;
+SELECT COUNT(*) as silver_customers_current FROM silver.customers_current;
 
-SELECT
-    SUM(orders_count) AS gold_total
-FROM gold.daily_orders;
+-- Check Silver history tables
+SELECT COUNT(*) as silver_orders_history FROM silver.orders_history;
+SELECT COUNT(*) as silver_customers_history FROM silver.customers_history;
 
-SELECT
-    COUNT(*) AS silver_total
-FROM silver.orders_current
-WHERE order_purchase_timestamp IS NOT NULL;
+-- Check Gold totals
+SELECT SUM(orders_count) AS gold_orders_total FROM gold.daily_orders;
+SELECT COUNT(*) as gold_customers_current FROM gold.customers_current;
+SELECT COUNT(*) as gold_customers_history FROM gold.customers_history;
 
-SELECT COUNT(*) AS gold_c FROM gold.customers_current;
-SELECT COUNT(*) AS silver_c FROM silver.customers_current;
+-- Verify all current records exist in history
+SELECT COUNT(*) FROM silver.orders_current c
+WHERE NOT EXISTS (
+    SELECT 1 FROM silver.orders_history h 
+    WHERE h.order_id = c.order_id AND h.is_current = 1
+);
+```
 
-SELECT COUNT(*) AS gold_h FROM gold.customers_history;
-SELECT COUNT(*) AS silver_h FROM silver.customers_history;
+---
+
+## AI-Assisted Workflow
+
+This project uses three Cursor subagents in [`.cursor/agents/`](.cursor/agents/):
+
+| Agent | Invoke | Role |
+|-------|--------|------|
+| Architect | `@pipeline-architect` | Designs tables, data flows, acceptance criteria (docs only) |
+| Developer | `@pipeline-developer` | Implements Bronze/Silver/Gold pipelines |
+| QA | `@pipeline-qa` | Runs pipelines and validates row counts / integrity |
+
+Workflow: Architect designs → Developer implements → QA validates.
+
+---
+
+## Validated Behavior
+
+- ✅ Bronze loads Olist orders and customers
+- ✅ Reload mode appends a new delivery without deleting old Bronze rows
+- ✅ Silver current maintains one row per business key
+- ✅ Silver history creates new SCD2 versions when tracked fields change
+- ✅ Silver delivery processing is idempotent (safe to re-run)
+- ✅ Gold daily orders totals match Silver current totals
+- ✅ All current records have corresponding history records
